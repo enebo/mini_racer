@@ -88,7 +88,7 @@ class MiniRacerTest < Minitest::Test
     assert_equal MiniRacer::ScriptTerminatedError, exp.class
     assert_match(/terminated/, exp.message)
 
-  end
+  end if RUBY_ENGINE != 'jruby'
 
   def test_it_can_timeout_during_serialization
     context = MiniRacer::Context.new(timeout: 500)

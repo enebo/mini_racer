@@ -1,5 +1,10 @@
 require "mini_racer/version"
-require "mini_racer_extension"
+if RUBY_ENGINE == 'jruby'
+  require "mini_racer/jruby/jruby_mini_racer_impl"
+  return
+else
+  require "mini_racer_extension"
+end
 require "thread"
 require "json"
 

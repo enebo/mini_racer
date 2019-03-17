@@ -54,9 +54,9 @@ class MiniRacerFunctionTest < Minitest::Test
 
   def test_complex_return
     context = MiniRacer::Context.new
-    context.eval('function f(x, y) { return { vx: x, vy: y, array: [x, y] } }')
+    context.eval('function f(x, y) { return { vx: x, vy: y, array: [x, y, [1], { y: 2 } ] } }')
 
-    h = { 'vx' => 3, 'vy' => 'bars', 'array' => [3, 'bars'] }
+    h = { 'vx' => 3, 'vy' => 'bars', 'array' => [3, 'bars', [1], { 'y' => 2 }] }
     res = context.call('f', 3, 'bars')
     assert_equal h, res
   end
