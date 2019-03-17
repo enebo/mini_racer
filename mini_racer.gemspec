@@ -28,7 +28,7 @@ Gem::Specification.new do |spec|
 #  spec.add_dependency 'libv8', '>= 6.3'
   spec.require_paths = ["lib", "ext"]
 
-  spec.extensions = ["ext/mini_racer_extension/extconf.rb"]
+#  spec.extensions = ["ext/mini_racer_extension/extconf.rb"]
 
   spec.required_ruby_version = '>= 2.3'
 end
