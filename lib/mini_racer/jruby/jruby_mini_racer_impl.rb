@@ -100,6 +100,11 @@ module MiniRacer
       @eval_thread = nil
     end
 
+    def load(filename)
+      # TODO do this native cause no need to allocate VALUE here
+      eval(File.read(filename))
+    end
+
     def call(function_name, *arguments)
       raise(ContextDisposedError, 'attempted to call function on a disposed context!') if @disposed
 
