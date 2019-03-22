@@ -50,6 +50,7 @@ module MiniRacer
   end
 
   class Context
+    java_import com.eclipsesource.v8.NodeJS
     java_import com.eclipsesource.v8.V8
     java_import com.eclipsesource.v8.V8Array
     java_import com.eclipsesource.v8.V8Object
@@ -83,7 +84,9 @@ module MiniRacer
 
 
     def init_unsafe(isolate, snapshot)
-      @@v8 = V8::createV8Runtime
+      #v8 = V8::createV8Runtime
+      @@nodejs = NodeJS.createNodeJS
+      @@v8 = @@nodejs.runtime
     end
 
     def eval(str, options=nil)
