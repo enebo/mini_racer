@@ -1,4 +1,5 @@
 require 'mini_racer/jruby/j2v8_linux_x86_64-4.8.0.jar'
+require 'mini_racer/jruby/converters'
 
 module MiniRacer
   class Error < ::StandardError; end
@@ -52,9 +53,56 @@ module MiniRacer
   class Context
     java_import com.eclipsesource.v8.NodeJS
     java_import com.eclipsesource.v8.V8
-    java_import com.eclipsesource.v8.V8Array
-    java_import com.eclipsesource.v8.V8Object
     java_import com.eclipsesource.v8.V8ScriptExecutionException
+
+    include MiniRacer::Converters
+
+    class ExternalFunction
+      def initialize(name, callback, parent)
+        unless String === name
+          raise ArgumentError, "parent_object must be a String"
+        end
+        parent_object, _ , @name = name.rpartition(".")
+        @callback = callback
+        @parent = parent
+
+        build_parent_object_eval(parent_object)
+
+        puts "PARENT_IOB: #{parent_object}"
+        if parent_object.empty?
+          parent.register(nil, @name, callback)
+        else
+          parent.register(parent.v8.executeObjectScript(@parent_object_eval), @name, callback)
+        end
+      end
+
+      private
+
+      def build_parent_object_eval(parent_object)
+        unless parent_object.empty?
+          @parent_object = parent_object
+
+          @parent_object_eval = ""
+          prev = ""
+          first = true
+          parent_object.split(".").each do |obj|
+            prev << obj
+            if first
+              @parent_object_eval << "if (typeof #{prev} === 'undefined') { #{prev} = {} };\n"
+            else
+              @parent_object_eval << "#{prev} = #{prev} || {};\n"
+            end
+            prev << "."
+            first = false
+          end
+          @parent_object_eval << "#{parent_object};"
+        end
+      end
+    end
+
+    def v8
+      @@v8
+    end
 
     def initialize(options = nil)
       options ||= {}
@@ -85,8 +133,8 @@ module MiniRacer
 
     def init_unsafe(isolate, snapshot)
       #v8 = V8::createV8Runtime
-      @@nodejs = NodeJS.createNodeJS
-      @@v8 = @@nodejs.runtime
+      @@nodejs ||= NodeJS.createNodeJS
+      @@v8 ||= @@nodejs.runtime
     end
 
     def eval(str, options=nil)
@@ -122,60 +170,88 @@ module MiniRacer
     end
 
     def eval_unsafe(src, file)
+      puts "EVAL_UNSAFE: #{src}"
       JSToRuby(@@v8.execute_script(src, file, 0))
     end
 
     def call_unsafe(function_name, *arguments)
-      arguments.map! { |arg| rubyToJS(arg) }
+      arguments.map! { |arg| rubyToJS(context, arg) }
       JSToRuby(@@v8.execute_js_function(function_name, *arguments))
     rescue V8ScriptExecutionException => e
       raise(MiniRacer::RuntimeError, e.message.sub(/^[^:]*:\d+:\s*/, ''))
     end
 
-    def rubyToJS(object)
-      case object
-      when Hash
-        object.each_with_object(V8Object.new(@@v8)) { |(key, value), hash| hash.add rubyToJS(key), rubyToJS(value) }
-      when Array
-        object.each_with_object(V8Array.new(@@v8)) { |elt, array| array.push rubyToJS(elt) }
-      when Symbol
-        object.to_s
-      else
-        object
+    class Runner
+      include com.eclipsesource.v8.JavaCallback
+
+      include MiniRacer::Converters
+
+      def initialize(context, callback)
+        @context, @callback = context, callback
+      end
+
+      def invoke(reciever, params)
+        params = JSToRuby(params)
+        puts "IN INVOKE: #{params}"
+        result = @callback[*params]
+        puts "RESULT: #{result} #{result.class}"
+        js_result = rubyToJS(@context, result)
+        puts "JSRESULT: #{js_result} #{js_result.class}"
+        #arr = com.eclipsesource.v8.V8Array.new(@context)
+        #arr.push(js_result)
+        #arr
+        #
       end
     end
 
-    def JSToRuby(object)
-      return object unless object.respond_to? :getV8Type
+    def attach(name, callback)
+      raise(ContextDisposedError, 'attempted to call function on a disposed context!') if @disposed
 
-      case object.getV8Type
-      when com.eclipsesource.v8.V8Value::V8_OBJECT
-        object.keys.each_with_object(Hash.new) { |key, hash| hash[key] = JSToRuby(object.get(key)) }
-      when com.eclipsesource.v8.V8Value::V8_ARRAY
-        array = []
-        object.length.times do |index|
-          array << JSToRubyArrayElement(object, index)
+      wrapped = lambda do |*args|
+        begin
+
+          r = nil
+
+          begin
+            @callback_mutex.synchronize{
+              @callback_running = true
+            }
+            r = callback.call(args)
+          ensure
+            @callback_mutex.synchronize{
+              @callback_running = false
+            }
+          end
+
+          # wait up to 2 seconds for this to be interrupted
+          # will very rarely be called cause #raise is called
+          # in another mutex
+          @callback_mutex.synchronize {
+            if @thread_raise_called
+              sleep 2
+            end
+          }
+
+          r
+        ensure
+          @callback_mutex.synchronize {
+            @thread_raise_called = false
+          }
         end
-        array
+      end
+
+      #isolate_mutex.synchronize do
+        external = ExternalFunction.new(name, wrapped, self)
+        @functions["#{name}"] = external
+      #end
+    end
+
+    def register(parent, name, callback)
+      if parent
+        parent.registerJavaMethod(Runner.new(@@v8, callback), name)
       else
-        object
+        @@v8.registerJavaMethod(Runner.new(@@v8, callback), name)
       end
-    end
-
-    def JSToRubyArrayElement(array, index)
-      case array.type(index)
-      when com.eclipsesource.v8.V8Value::INTEGER
-        array.get_integer(index)
-      when com.eclipsesource.v8.V8Value::STRING
-        array.get_string(index)
-      when com.eclipsesource.v8.V8Value::V8_ARRAY
-        JSToRuby(array.get_array(index))
-      when com.eclipsesource.v8.V8Value::V8_OBJECT
-        JSToRuby(array.get_object(index))
-      end
-    end
-
-    def notify_v8
     end
 
     def dispose
